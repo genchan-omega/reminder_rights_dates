@@ -1,8 +1,12 @@
 import re
+import json
+from http.server import BaseHTTPRequestHandler
+
 import requests
 from bs4 import BeautifulSoup
 
 UA = "Mozilla/5.0 (compatible; invest-jp-scraper/1.0)"
+
 
 def fetch_yuutai_days(url: str = "https://www.invest-jp.net/yuutai") -> dict:
     r = requests.get(
@@ -40,5 +44,24 @@ def fetch_yuutai_days(url: str = "https://www.invest-jp.net/yuutai") -> dict:
         "rights_day": m_rights.group("date"),      # 例: "2月20日"
     }
 
-if __name__ == "__main__":
-    print(fetch_yuutai_days())
+
+# ---- Vercel で /api/rights_dates として公開する入口 ----
+class handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        try:
+            data = fetch_yuutai_days()
+
+            body = json.dumps(data, ensure_ascii=False).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            # GASから定期的に叩くなら、軽くキャッシュさせると安定します
+            self.send_header("Cache-Control", "public, s-maxage=1800, stale-while-revalidate=86400")
+            self.end_headers()
+            self.wfile.write(body)
+
+        except Exception as e:
+            body = json.dumps({"error": str(e)}, ensure_ascii=False).encode("utf-8")
+            self.send_response(500)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(body)
