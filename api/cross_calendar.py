@@ -14,7 +14,18 @@ app = FastAPI()
 
 CALENDAR_URL = "https://gokigen-life.tokyo/calendar/"
 
-DATE_RE = re.compile(r"^(\d{1,2}月\d{1,2}日\(.+?\))(.*)$")  # 例: 2月18日(水)Today...
+DATE_RE = re.compile(r"^(\d{1,2}月\d{1,2}日\(.+?\))(.*)$")  # 例: 2月18日(水)...
+TODAY_RE = re.compile(r"\bToday\b", re.IGNORECASE)
+
+
+def _clean_text(s: str) -> str:
+    """Remove 'Today' and normalize whitespace."""
+    if not s:
+        return ""
+    s = TODAY_RE.sub("", s)
+    s = re.sub(r"[ \t]+", " ", s)        # collapse spaces/tabs
+    s = re.sub(r"\n{3,}", "\n\n", s)     # collapse too many newlines
+    return s.strip()
 
 
 def _fetch_html(url: str) -> str:
@@ -22,7 +33,8 @@ def _fetch_html(url: str) -> str:
         "User-Agent": "Mozilla/5.0 (compatible; reminder-bot/1.0; +https://example.com)",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     }
-    r = requests.get(url, headers=headers, timeout=20)
+    # connect timeout 10s, read timeout 40s (a bit more tolerant than 20s)
+    r = requests.get(url, headers=headers, timeout=(10, 40))
     if r.status_code != 200:
         raise HTTPException(status_code=502, detail=f"fetch failed: {r.status_code}")
     r.encoding = r.apparent_encoding or "utf-8"
@@ -94,12 +106,17 @@ def _parse_rows(section_text: str) -> List[Dict[str, Any]]:
         cur_date, cur_events = None, []
 
     for ln in lines[start_idx:]:
+        ln = _clean_text(ln)  # ★ Today除去 + 空白整形
+        if not ln:
+            continue
+
         m = DATE_RE.match(ln)
         if m:
             # 新しい日付
             flush()
-            cur_date = m.group(1).strip()
-            rest = (m.group(2) or "").strip()
+            cur_date = _clean_text(m.group(1).strip())
+
+            rest = _clean_text((m.group(2) or "").strip())
             if rest:
                 cur_events.append(rest)
             continue
@@ -112,15 +129,18 @@ def _parse_rows(section_text: str) -> List[Dict[str, Any]]:
 
     flush()
 
-    # 念のため「イベントはありません」統一
+    # 念のため「イベントはありません」統一＆空文字除去
     for r in rows:
-        evs = [e for e in r["events"] if e]
+        evs = [_clean_text(e) for e in r.get("events", [])]
+        evs = [e for e in evs if e]
         r["events"] = evs if evs else ["イベントはありません"]
+        r["date"] = _clean_text(r.get("date", "")) or "（日付不明）"
 
     return rows
 
 
-@app.get("/api/cross_calendar")
+# Vercel: /api/cross_calendar に対して FastAPI側は "/" を持つのが安全
+@app.get("/")
 def cross_calendar():
     try:
         html = _fetch_html(CALENDAR_URL)
