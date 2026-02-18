@@ -140,7 +140,7 @@ def _parse_rows(section_text: str) -> List[Dict[str, Any]]:
 
 
 # Vercel: /api/cross_calendar に対して FastAPI側は "/" を持つのが安全
-@app.get("/")
+@app.get("/api/cross_calendar")
 def cross_calendar():
     try:
         html = _fetch_html(CALENDAR_URL)
